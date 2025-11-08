@@ -17,24 +17,35 @@ GIT_REMOTE = os.environ.get("GIT_REMOTE", "origin")
 BASE_BRANCH = os.environ.get("BASE_BRANCH", "main")
 
 AUTH = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_TOKEN}".encode()).decode()
-JHDRS = {"Authorization": f"Basic {AUTH}", "Accept": "application/json", "Content-Type": "application/json"}
+JHDRS = {
+    "Authorization": f"Basic {AUTH}",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+}
 
 PROMPT_DIR = WORKSPACE / ".q"
 ARTIFACT_DIR = WORKSPACE / ".devflow_artifacts"
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
+
 def run(cmd: str, cwd: Optional[pathlib.Path] = None, check: bool = True) -> str:
     shell = os.name == "nt"
-    p = subprocess.run(cmd if shell else shlex.split(cmd),
-                       cwd=str(cwd) if cwd else None,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       text=True, shell=shell)
+    p = subprocess.run(
+        cmd if shell else shlex.split(cmd),
+        cwd=str(cwd) if cwd else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        shell=shell,
+    )
     if check and p.returncode != 0:
         raise RuntimeError(p.stdout)
     return p.stdout
 
+
 def slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:50]
+
 
 def jira_get_issue(issue_key: str) -> dict:
     url = f"{JIRA_BASE}/rest/api/3/issue/{issue_key}?fields=summary,description"
@@ -50,17 +61,20 @@ def jira_get_issue(issue_key: str) -> dict:
         for blk in desc.get("content", []):
             for c in blk.get("content", []) or []:
                 t = c.get("text")
-                if t: chunks.append(t)
+                if t:
+                    chunks.append(t)
         description = "\n".join(chunks).strip()
     elif isinstance(desc, str):
         description = desc
     return {"summary": f.get("summary", ""), "description": description}
+
 
 def ensure_base():
     run("git fetch --all", cwd=WORKSPACE)
     run(f"git checkout {BASE_BRANCH}", cwd=WORKSPACE)
     run(f"git reset --hard {GIT_REMOTE}/{BASE_BRANCH}", cwd=WORKSPACE)
     run("git clean -fd", cwd=WORKSPACE)
+
 
 def ensure_branch(issue_key: str, summary: str) -> str:
     name = f"feature/{issue_key}-{slug(summary)}"
@@ -71,6 +85,7 @@ def ensure_branch(issue_key: str, summary: str) -> str:
         run(f"git checkout {name}", cwd=WORKSPACE)
     run(f"git push -u {GIT_REMOTE} {name}", cwd=WORKSPACE, check=False)
     return name
+
 
 def write_prompt(issue_key: str, summary: str, description: str) -> pathlib.Path:
     PROMPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -93,22 +108,32 @@ def write_prompt(issue_key: str, summary: str, description: str) -> pathlib.Path
         "## Notes for Amazon Q inside VS Code",
         "- Use full project context.",
         "- Generate runnable code and tests.",
-      ]
+    ]
     p.write_text("\n".join(body), encoding="utf-8")
     return p
+
 
 def commit_push(message: str):
     run("git add -A", cwd=WORKSPACE)
     run(f'git commit -m "{message}" || true', cwd=WORKSPACE, check=False)
     run("git push", cwd=WORKSPACE, check=False)
 
+
 def jira_comment(issue_key: str, text: str):
     url = f"{JIRA_BASE}/rest/api/3/issue/{issue_key}/comment"
-    body = {"body": {"type": "doc", "version": 1,
-                     "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}]}}
+    body = {
+        "body": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+            ],
+        }
+    }
     r = requests.post(url, headers=JHDRS, data=json.dumps(body), timeout=30)
     if r.status_code >= 300:
         raise RuntimeError(f"Jira comment failed: {r.status_code} {r.text}")
+
 
 def detect_test_command() -> Tuple[str, str]:
     """
@@ -117,7 +142,11 @@ def detect_test_command() -> Tuple[str, str]:
     """
     w = WORKSPACE
     # Python
-    if (w / "pytest.ini").exists() or (w / "pyproject.toml").exists() or (w / "requirements.txt").exists():
+    if (
+        (w / "pytest.ini").exists()
+        or (w / "pyproject.toml").exists()
+        or (w / "requirements.txt").exists()
+    ):
         return ("pytest -q --maxfail=1 --disable-warnings", "pytest")
     # Node / JS / TS
     if (w / "package.json").exists():
@@ -126,10 +155,16 @@ def detect_test_command() -> Tuple[str, str]:
             pkg = json.loads((w / "package.json").read_text(encoding="utf-8"))
             scripts = pkg.get("scripts", {})
             if "test" in scripts:
-                return ("npm test --silent --if-present || yarn test || pnpm test", "npm/yarn/pnpm test")
+                return (
+                    "npm test --silent --if-present || yarn test || pnpm test",
+                    "npm/yarn/pnpm test",
+                )
         except Exception:
             pass
-        return ("npx --yes vitest run || npx --yes jest --ci || npx --yes mocha", "npx test runner")
+        return (
+            "npx --yes vitest run || npx --yes jest --ci || npx --yes mocha",
+            "npx test runner",
+        )
     # Java
     if (w / "pom.xml").exists():
         return ("mvn -q -DskipTests=false test", "maven")
@@ -150,12 +185,19 @@ def detect_test_command() -> Tuple[str, str]:
         return ("make test", "make test")
     return ("echo 'No test runner detected' && exit 0", "none")
 
+
 def run_tests(issue_key: str) -> Tuple[int, str, str]:
     cmd, label = detect_test_command()
     shell = True  # cross-platform convenience for chained commands
     print(f"[devflow] Running tests via: {label}\n$ {cmd}")
-    p = subprocess.run(cmd, cwd=str(WORKSPACE), shell=shell,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    p = subprocess.run(
+        cmd,
+        cwd=str(WORKSPACE),
+        shell=shell,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
     out = p.stdout
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_dir = ARTIFACT_DIR / issue_key
@@ -165,20 +207,23 @@ def run_tests(issue_key: str) -> Tuple[int, str, str]:
     (out_dir / "last.status").write_text(str(p.returncode), encoding="utf-8")
     return p.returncode, out, str(out_dir)
 
+
 # --- add near other imports ---
 import platform
 import json
 
 # --- constants (put near PROMPT_DIR/ARTIFACT_DIR) ---
-REPO_STACK_FILE = WORKSPACE / ".devflow.tech.json"   # repo-wide defaults
+REPO_STACK_FILE = WORKSPACE / ".devflow.tech.json"  # repo-wide defaults
 # schema: {"default":{"lang":"python","framework":"django"},
 #          "issues":{"SCRUM-1":{"lang":"node","framework":"next"}}}
+
 
 # --- utils ---
 def _venv_paths(venv_dir: pathlib.Path) -> Tuple[pathlib.Path, pathlib.Path]:
     if platform.system().lower().startswith("win"):
         return venv_dir / "Scripts" / "python.exe", venv_dir / "Scripts" / "pip.exe"
     return venv_dir / "bin" / "python", venv_dir / "bin" / "pip"
+
 
 def _read_repo_defaults() -> dict:
     if REPO_STACK_FILE.exists():
@@ -187,6 +232,7 @@ def _read_repo_defaults() -> dict:
         except Exception:
             pass
     return {}
+
 
 def _read_issue_cache(issue_key: str) -> dict:
     f = ARTIFACT_DIR / issue_key / "stack.json"
@@ -197,10 +243,12 @@ def _read_issue_cache(issue_key: str) -> dict:
             pass
     return {}
 
+
 def _write_issue_cache(issue_key: str, stack: dict) -> None:
     d = ARTIFACT_DIR / issue_key
     d.mkdir(parents=True, exist_ok=True)
     (d / "stack.json").write_text(json.dumps(stack, indent=2), encoding="utf-8")
+
 
 def _parse_env_stack() -> dict:
     # Example: DEVFLOW_TECH="python/django" or "node:next"
@@ -213,16 +261,26 @@ def _parse_env_stack() -> dict:
             return {"lang": lang, "framework": framework}
     return {"lang": raw, "framework": ""}
 
+
 def detect_tech_stack(summary: str, description: str) -> dict:
     text = f"{summary}\n{description}".lower()
     w = WORKSPACE
 
     # Heuristics
     # Python+Django
-    if (w / "manage.py").exists() or any(
-        "django" in (p.read_text(encoding="utf-8", errors="ignore").lower() if p.exists() else "")
-        for p in [w / "requirements.txt", w / "pyproject.toml"]
-    ) or "django" in text:
+    if (
+        (w / "manage.py").exists()
+        or any(
+            "django"
+            in (
+                p.read_text(encoding="utf-8", errors="ignore").lower()
+                if p.exists()
+                else ""
+            )
+            for p in [w / "requirements.txt", w / "pyproject.toml"]
+        )
+        or "django" in text
+    ):
         return {"lang": "python", "framework": "django"}
 
     # Node+Next
@@ -239,6 +297,7 @@ def detect_tech_stack(summary: str, description: str) -> dict:
         return {"lang": "node", "framework": ""}
 
     return {}
+
 
 def resolve_stack(issue_key: str, summary: str, description: str) -> dict:
     """
@@ -273,6 +332,7 @@ def resolve_stack(issue_key: str, summary: str, description: str) -> dict:
         _write_issue_cache(issue_key, guessed)
     return guessed
 
+
 # --- environment setup ---
 def _detect_node_pm() -> Tuple[str, str]:
     """Return (install_cmd, add_cmd_prefix) for package manager."""
@@ -285,8 +345,10 @@ def _detect_node_pm() -> Tuple[str, str]:
         return ("npm ci --silent", "npm install -D --silent")
     return ("npm install --silent", "npm install -D --silent")
 
+
 # --- add below imports ---
 import platform
+
 
 # --- add helpers near top ---
 def _venv_paths(venv_dir: pathlib.Path) -> Tuple[pathlib.Path, pathlib.Path]:
@@ -299,6 +361,7 @@ def _venv_paths(venv_dir: pathlib.Path) -> Tuple[pathlib.Path, pathlib.Path]:
         pip = venv_dir / "bin" / "pip"
     return py, pip
 
+
 def detect_tech_stack(summary: str, description: str) -> dict:
     """
     Heuristics: returns {"lang": "...", "framework": "..."} or {}.
@@ -309,7 +372,10 @@ def detect_tech_stack(summary: str, description: str) -> dict:
 
     # File-based Django signals
     if (w / "manage.py").exists() or any(
-        "django" in (p.read_text(encoding="utf-8", errors="ignore").lower() if p.exists() else "")
+        "django"
+        in (
+            p.read_text(encoding="utf-8", errors="ignore").lower() if p.exists() else ""
+        )
         for p in [w / "requirements.txt", w / "pyproject.toml"]
     ):
         return {"lang": "python", "framework": "django"}
@@ -320,6 +386,7 @@ def detect_tech_stack(summary: str, description: str) -> dict:
 
     # Extend here for other stacks as needed (node, spring, etc.)
     return {}
+
 
 def ensure_environment(stack: dict) -> None:
     """
@@ -362,6 +429,7 @@ def ensure_environment(stack: dict) -> None:
 
     # Placeholder for future stacks
     print(f"[env] Stack not implemented: {stack}. Skipping.")
+
 
 # --- modify cmd_prepare to call env setup before branching ---
 def cmd_prepare(issue_key: str):
@@ -406,15 +474,18 @@ def cmd_prepare(issue_key: str):
 def cmd_open(issue_key: str):
     pf = PROMPT_DIR / f"{issue_key}.prompt.md"
     if not pf.exists():
-        print("Prompt not found. Run 'prepare' first."); sys.exit(1)
+        print("Prompt not found. Run 'prepare' first.")
+        sys.exit(1)
     # Try to open prompt in the editor.
     run(f'code -g "{pf}"', check=False)
     print(f"Open {pf} in VS Code and use Amazon Q.")
 
+
 def cmd_inject(issue_key: str):
     pf = PROMPT_DIR / f"{issue_key}.prompt.md"
     if not pf.exists():
-        print("Run 'prepare' first."); sys.exit(1)
+        print("Run 'prepare' first.")
+        sys.exit(1)
     text = pf.read_text(encoding="utf-8")
     # Prefer X11 path: xdotool + clipboard, to drive VS Code and paste
     if shutil.which("xdotool"):
@@ -424,10 +495,23 @@ def cmd_inject(issue_key: str):
         elif shutil.which("wl-copy"):
             subprocess.run(f'wl-copy < "{pf}"', shell=True)
         else:
-            print("Clipboard tool not found. Install xclip or wl-clipboard."); sys.exit(1)
+            print("Clipboard tool not found. Install xclip or wl-clipboard.")
+            sys.exit(1)
         # Focus VS Code and send keys
-        subprocess.run('xdotool search --onlyvisible --name "Visual Studio Code" windowactivate --sync', shell=True)
-        for s in ['key ctrl+shift+p', 'type Amazon Q: Open Chat', 'sleep 0.2', 'key Return', 'sleep 0.2', 'key ctrl+v', 'sleep 0.2', 'key Return']:
+        subprocess.run(
+            'xdotool search --onlyvisible --name "Visual Studio Code" windowactivate --sync',
+            shell=True,
+        )
+        for s in [
+            "key ctrl+shift+p",
+            "type Amazon Q: Open Chat",
+            "sleep 0.2",
+            "key Return",
+            "sleep 0.2",
+            "key ctrl+v",
+            "sleep 0.2",
+            "key Return",
+        ]:
             subprocess.run(f"xdotool {s}", shell=True)
         print(f"Injected into VS Code via xdotool: {pf}")
         return
@@ -451,12 +535,15 @@ def cmd_inject(issue_key: str):
                 pass
         print(f"Injected via wtype: {pf}")
         return
-    print("Install xdotool (X11) or ydotool/wtype (Wayland) to inject into Q chat."); sys.exit(1)
+    print("Install xdotool (X11) or ydotool/wtype (Wayland) to inject into Q chat.")
+    sys.exit(1)
+
 
 def cmd_inject(issue_key: str):
     pf = PROMPT_DIR / f"{issue_key}.prompt.md"
     if not pf.exists():
-        print("Run 'prepare' first."); sys.exit(1)
+        print("Run 'prepare' first.")
+        sys.exit(1)
     text = pf.read_text(encoding="utf-8")
     # Prefer ydotool (Wayland-friendly)
     if shutil.which("ydotool"):
@@ -478,29 +565,38 @@ def cmd_inject(issue_key: str):
                 pass
         print(f"Injected via wtype: {pf}")
         return
-    print("Install ydotool (preferred) or wtype."); sys.exit(1)
+    print("Install ydotool (preferred) or wtype.")
+    sys.exit(1)
+
 
 def cmd_test(issue_key: str):
     code, out, path = run_tests(issue_key)
     status = "PASS" if code == 0 else "FAIL"
     print(f"[{status}] Artifacts: {path}")
 
+
 def cmd_post(issue_key: str):
     out_file = ARTIFACT_DIR / issue_key / "last.log"
     status_file = ARTIFACT_DIR / issue_key / "last.status"
     if not out_file.exists() or not status_file.exists():
-        print("No local test artifacts. Run 'test' first."); sys.exit(1)
+        print("No local test artifacts. Run 'test' first.")
+        sys.exit(1)
     out = out_file.read_text(encoding="utf-8")
     code = int(status_file.read_text(encoding="utf-8").strip() or "1")
     status = "PASS" if code == 0 else "FAIL"
     snippet = "\n".join(out.splitlines()[:120])
-    jira_comment(issue_key, f"Local unit test status: {status}\n\nOutput (first 120 lines):\n{snippet}")
+    jira_comment(
+        issue_key,
+        f"Local unit test status: {status}\n\nOutput (first 120 lines):\n{snippet}",
+    )
     print(f"[{status}] Posted to Jira {issue_key}")
+
 
 def cmd_stack(issue_key: str, lang: str, framework: Optional[str] = None):
     stack = {"lang": lang.lower(), "framework": (framework or "").lower()}
     _write_issue_cache(issue_key, stack)
     print(f"[stack] {issue_key} -> {stack}")
+
 
 def help():
     print("Usage:")
@@ -509,6 +605,7 @@ def help():
     print("  python tools/devflow/cli.py inject  <ISSUE-KEY>")
     print("  python tools/devflow/cli.py test    <ISSUE-KEY>")
     print("  python tools/devflow/cli.py post    <ISSUE-KEY>")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -529,7 +626,9 @@ if __name__ == "__main__":
         cmd_inject(key)
     elif cmd == "stack":
         if len(sys.argv) < 4:
-            print("Usage: python tools/devflow/cli.py stack <ISSUE-KEY> <lang> [framework]")
+            print(
+                "Usage: python tools/devflow/cli.py stack <ISSUE-KEY> <lang> [framework]"
+            )
             sys.exit(1)
         lang = sys.argv[3]
         framework = sys.argv[4] if len(sys.argv) > 4 else None
@@ -537,4 +636,3 @@ if __name__ == "__main__":
     else:
         help()
         sys.exit(1)
-
