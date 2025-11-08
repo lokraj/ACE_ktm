@@ -1,0 +1,34 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Django
+*.log
+db.sqlite3
+media/
+staticfiles/
+
+# Devflow and artifacts
+.devflow_artifacts/
+.q/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Dependencies
+*.egg-info/
+.eggs/
+build/
+dist/
+.devflow.tech.json
+.env
+cli.py
